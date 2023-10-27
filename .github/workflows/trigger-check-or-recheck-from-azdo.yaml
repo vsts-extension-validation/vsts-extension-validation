@@ -1,0 +1,67 @@
+name: 'Trigger (re-)check from Azure DevOps'
+
+on:
+  workflow_dispatch:
+    inputs:
+      organization:
+        description: 'Organization'
+        required: true
+      repository:
+        description: 'Repository'
+        required: true
+
+jobs:
+  fork-or-update:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - name: 'Check if an issue already exists'
+      run: |
+        json_list=$(gh issue list --repo vsts-extension-validation/vsts-extension-validation --state open  --json number,title,body --search "organization=${{ github.event.inputs.organization }}" --search "repository=${{ github.event.inputs.repository }}" |jq)
+
+        if [ "$json_list" == "[]" ]; then
+          # Create issue
+          echo "Creating issue triggered by Azure DevOps"
+          echo "organization=${{ github.event.inputs.organization }}" >> body.md
+          echo "repository=${{ github.event.inputs.repository }}" >> body.md
+
+          issue_uri=$(gh issue create --repo vsts-extension-validation/vsts-extension-validation --title "Check ${{ github.event.inputs.organization }}/${{ github.event.inputs.repository }}" -F body.md)
+
+          # get last path element of issue_uri
+          path_element=$(echo $issue_uri | sed -e 's|/|\n|g'|wc -l)
+          issue_number=$(echo $issue_uri | cut -d / -f $path_element)
+
+          # adding the label `update-fork`
+          gh issue edit $issue_number --add-label fork --repo vsts-extension-validation/vsts-extension-validation
+
+          sleep 300
+        else
+          issue_number=$(echo $json_list | jq '.[].number' -r)
+
+          # removing all existing labels
+          if [ "null" != "$(echo $json_list | jq .[].labels)" ]; then
+            labels=$(echo $json_list | jq '.[].labels| .[].name' -r)
+
+            for label in $labels; do
+              gh issue edit $issue_number remove-label $label --repo vsts-extension-validation/vsts-extension-validation
+            done
+          fi
+
+          # adding the label `update-fork`
+          gh issue edit $issue_number --add-label update-fork --repo vsts-extension-validation/vsts-extension-validation
+
+          sleep 300
+        fi
+
+        # Add dependabot label
+        gh issue edit $issue_number --add-label dependabot --repo vsts-extension-validation/vsts-extension-validation
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}

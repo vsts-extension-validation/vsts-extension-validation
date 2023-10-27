@@ -1,0 +1,72 @@
+on:
+  issues:
+    types: [ labeled ]
+
+jobs:
+  remove-fork:
+    if: contains(github.event.issue.labels.*.name, 'remove-fork')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 'Get repository to remove'
+      id: upstream
+      run: |
+        organization=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=organization=).+')
+        repo=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=repository=).+')
+
+        echo "organization=${organization}" >> $GITHUB_OUTPUT
+        echo "repo=${repo}" >> $GITHUB_OUTPUT
+
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - run: |
+        echo "${{ secrets.GH_TOKEN }}" > pat.token
+        gh auth login --with-token < pat.token
+
+    - if: always()
+      run: rm pat.token
+
+    - name: 'Delete repo'
+      id: 'delete'
+      run: |
+        gh repo delete vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }} --yes
+
+        # switch statement for error code
+        case $? in
+          0)
+            echo "status=success" >> $GITHUB_OUTPUT
+            ;;
+          1)
+            echo "status=failed" >> $GITHUB_OUTPUT
+            ;;
+          2)
+            echo "status=canceled" >> $GITHUB_OUTPUT
+            ;;
+          4)
+            echo "status=unauthorized" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            ;;
+        esac
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    # - name: 'Update issue'
+    #   if: always()
+    #   run: |
+    #     if [[ "${{ steps.delete.outputs.status }}" == "success" ]]; then
+    #       gh issue edit ${{ github.event.issue.number }} --remove-label 'fork'
+    #       gh issue edit ${{ github.event.issue.number }} --remove-label 'remove-fork'
+    #       gh issue comment ${{ github.event.issue.number }} --body "Removed fork."
+    #     else
+    #       gh issue comment ${{ github.event.issue.number }} --body "Failed to remove te fork. Does it exists?"
+    #     fi
+    #   env:
+    #     GH_TOKEN: ${{ steps.generate_token.outputs.token }}

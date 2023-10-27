@@ -1,0 +1,35 @@
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '<<MINUTE>> <<HOUR>> * * <<DAY_OF_THE_WEEK>>'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: csharp
+
+      - run: |
+          dotnet restore <<SOLUTIONS_FILE>>
+          dotnet build <<SOLUTIONS_FILE>>
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+        with:
+          languages: csharp
+          upload: true
+          sarif-file: codeql-results.sarif

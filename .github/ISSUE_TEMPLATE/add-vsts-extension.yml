@@ -12,6 +12,7 @@ body:
     attributes:
       label: 'Organization or user'
       description: 'Organization or user that owns the extension'
+      value: 'organization='
     validations:
       required: true
 
@@ -19,5 +20,6 @@ body:
     id: 'repo'
     attributes:
       label: 'Which repository is the extension in?'
+      value: 'repository='
     validations:
       required: true

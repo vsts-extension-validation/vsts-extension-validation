@@ -1,0 +1,72 @@
+name: 'Update from upstream'
+
+on:
+  issues:
+    types: [ labeled ]
+
+jobs:
+  update-fork:
+    if: contains(github.event.issue.labels.*.name, 'update-fork')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 'Get repository to update from'
+      id: upstream
+      run: |
+        organization=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=organization=).+')
+        repo=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=repository=).+')
+
+        echo "organization=${organization}" >> $GITHUB_OUTPUT
+        echo "repo=${repo}" >> $GITHUB_OUTPUT
+
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - uses: actions/checkout@v4
+      with:
+        repository: vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }}
+        path: fork
+        fetch-depth: 0
+        token: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Update from upstream'
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+        echo "${{ secrets.GH_TOKEN }}" > pat.token
+        gh auth login --with-token < pat.token
+
+        default_branch=$(gh api repos/${{ steps.upstream.outputs.organization }}/${{ steps.upstream.outputs.repo }} | jq -r '.default_branch' -r)
+
+        pushd fork
+          echo "Add upstream"
+          git remote add upstream https://github.com/${{ steps.upstream.outputs.organization }}/${{ steps.upstream.outputs.repo }}.git
+
+          echo "Pulling upstream into fork"
+          git pull upstream $default_branch --rebase
+
+          if [ -n "$(git status --porcelain)" ]; then
+              echo "Changes detected after rebasing upstream into fork."
+
+              # Check if we have rebase conflicts
+              if git status --porcelain | grep 'UU'; then
+                  message="You need to do a manual rebase, and resolve the conflicts."
+              else
+                  git push -u upstream main
+                  message="Rebase was successful without conflicts."
+              fi
+          else
+              message="No upstream changes."
+          fi
+
+          gh issue comment ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation -b "${message}"
+        popd
+
+    - if: always()
+      run: rm pat.token || true

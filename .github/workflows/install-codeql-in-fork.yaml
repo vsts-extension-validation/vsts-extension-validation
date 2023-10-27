@@ -1,0 +1,71 @@
+on:
+  issues:
+    types: [ labeled ]
+
+jobs:
+  codeql:
+    if: contains(github.event.issue.labels.*.name, 'codeql')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 'Get repository to add codeQL to'
+      id: upstream
+      run: |
+        organization=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=organization=).+')
+        repo=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=repository=).+')
+
+        echo "organization=${organization}" >> $GITHUB_OUTPUT
+        echo "repo=${repo}" >> $GITHUB_OUTPUT
+
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - name: 'Checkout self'
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: 'Checkout fork'
+      uses: actions/checkout@v4
+      with:
+        repository: vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }}
+        path: fork
+        token: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Determine main language'
+      id: language
+      run: |
+        LANGUAGE=$(gh api repos/${{ steps.upstream.outputs.organization }}/${{ steps.upstream.outputs.repo }} | jq '.language' -r)
+        echo "language=${LANGUAGE}" >> $GITHUB_OUTPUT
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - if: ${{ steps.language.outputs.language == 'csharp' }}
+      name: 'Enable dependabot and codeQL for C#'
+      run: |
+        src/setup-codeql.sh csharp vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }} ${{ github.event.issue.number }}
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - if: ${{ steps.language.outputs.language == 'typescript' || steps.language.outputs.language == 'JavaScript'}}
+      name: 'Enable dependabot and codeQL for TypeScript or JavaScript'
+      run: |
+        src/setup-codeql.sh typescript vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }} ${{ github.event.issue.number }}
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Wait for the CodeQL to finish running'
+      run: |
+        sleep 600
+
+    - name: 'Query results'
+      run: |
+        message=$(gh api repos/vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }}/code-scanning/alerts| jq '.message')
+        gh issue comment ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation -b "$message"
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}

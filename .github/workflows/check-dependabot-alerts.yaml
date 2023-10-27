@@ -1,0 +1,60 @@
+name: 'Add dependabot alerts'
+
+on:
+  issues:
+    types: [ labeled ]
+
+jobs:
+  dependabot:
+    if: contains(github.event.issue.labels.*.name, 'dependabot')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 'Get repository to fork'
+      id: upstream
+      run: |
+        organization=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=organization=).+')
+        repo=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=repository=).+')
+
+        echo "organization=${organization}" >> $GITHUB_OUTPUT
+        echo "repo=${repo}" >> $GITHUB_OUTPUT
+
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - run: |
+        echo "${{ secrets.GH_TOKEN }}" > pat.token
+        gh auth login --with-token < pat.token
+
+    - if: always()
+      run: rm pat.token
+
+    - name: 'Checkout self'
+      uses: actions/checkout@v4
+
+    - name: 'Get dependabot alerts'
+      run: |
+        curl -L -sSf \
+          -H "Accept: application/vnd.github+json" \
+          -H "Authorization: Bearer ${GH_TOKEN}" \
+          -H "X-GitHub-Api-Version: 2022-11-28" \
+          https://api.github.com/repos/vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }}/dependabot/alerts> dependabot_issues.json
+
+          cat dependabot_issues.json
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Construct alerts markdown'
+      shell: pwsh
+      run: ./src/create-markdown-for-dependabot-alerts.ps1 -in ./dependabot_issues.json -out ./alerts.md
+
+    - name: 'Add comment to issue with scan results'
+      run: |
+        gh issue comment ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation -F alerts.md
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}

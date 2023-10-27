@@ -1,0 +1,106 @@
+name: 'Copy repository and do initial scan'
+
+on:
+  issues:
+    types: [ labeled ]
+
+jobs:
+  fork:
+    if: contains(github.event.issue.labels.*.name, 'fork')
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 'Get repository to fork'
+      id: upstream
+      run: |
+        organization=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=organization=).+')
+        repo=$(echo "${{ github.event.issue.body }}" | grep -oP '(?<=repository=).+')
+
+        echo "organization=${organization}" >> $GITHUB_OUTPUT
+        echo "repo=${repo}" >> $GITHUB_OUTPUT
+
+    - name: Get Token
+      id: generate_token
+      uses: peter-murray/workflow-application-token-action@v2
+      with:
+        application_id: ${{ vars.APP_ID }}
+        application_private_key: ${{ secrets.PRIVATE_KEY }}
+        organization: 'vsts-extension-validation'
+
+    - name: 'Checkout self'
+      uses: actions/checkout@v4
+
+    - name: 'Create repo'
+      run: |
+        gh repo create vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }} --public
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Pulling upstream in origin'
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+        default_branch=$(gh api repos/${{ steps.upstream.outputs.organization }}/${{ steps.upstream.outputs.repo }} | jq -r '.default_branch' -r)
+
+        mkdir fork
+
+        pushd fork
+          echo "Init git repo"
+          git init
+          git branch -M main
+
+          echo "Add origin"
+          git remote add origin https://x-access-token:${{ steps.generate_token.outputs.token }}@github.com/vsts-extension-validation/${{ steps.upstream.outputs.organization }}_${{ steps.upstream.outputs.repo }}.git
+
+          echo "Add upstream"
+          git remote add upstream https://github.com/${{ steps.upstream.outputs.organization }}/${{ steps.upstream.outputs.repo }}.git
+
+          echo "Pulling upstream into origin"
+          git pull upstream $default_branch --rebase
+        popd
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Check if repo has codeQL and dependabot enabled actions'
+      id: 'scan'
+      run: |
+        pushd fork
+        ../src/check_current_workflows.sh
+        popd
+
+    - name: Update comment with results
+      run: |
+        src/update-issue-comment.sh
+      env:
+        UPDATED_AT: ${{ github.event.issue.updated_at }}
+        HAS_GITHUB_FOLDER: ${{ steps.scan.outputs.has_github_folder }}
+        HAS_WORKFLOWS_FOLDER: ${{ steps.scan.outputs.has_workflows_folder }}
+        HAS_DEPENDABOT_CONFIGURATION: ${{ steps.scan.outputs.has_dependabot_configuration }}
+        HAS_CODEQL_INIT: ${{ steps.scan.outputs.has_codeql_init }}
+        WORKFLOW_WITH_CODEQL_INIT: ${{ steps.scan.outputs.workflow_with_codeql_init }}
+        HAS_CODEQL_ANALYZE: ${{ steps.scan.outputs.has_codeql_analyze }}
+        WORKFLOW_WITH_CODEQL_ANALYZE: ${{ steps.scan.outputs.workflow_with_codeql_analyze }}
+
+    - name: 'Add comment to issue with scan results'
+      run: |
+        gh issue comment ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation -F result.md
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
+
+    - name: 'Removing existing actions'
+      run: |
+        pushd fork
+          echo 'Remove existing workflows'
+
+          if [ -d .github/workflows ]; then
+            git rm -rf .github/workflows
+            git commit -m "Remove existing workflows"
+          fi
+
+          git push -u origin main
+
+          gh issue comment ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation -b "Removed existing workflows"
+        popd
+      env:
+        GH_TOKEN: ${{ steps.generate_token.outputs.token }}
