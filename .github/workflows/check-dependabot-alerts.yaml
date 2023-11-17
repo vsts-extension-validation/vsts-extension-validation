@@ -61,11 +61,11 @@ jobs:
 
     - name: 'Close/Label issue based on results'
       run: |
-        if [[ $(cat alert.md) == "No dependabot alerts found." ]]; then
-          gh label add no-packagemanager ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation
+        if [[ $(cat alerts.md) == "No dependabot alerts found." ]]; then
+          gh issue edit --add-label no-packagemanager ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation
           gh issue close ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation
         else
-          gh label add packagemanager-with-issues ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation
+          gh issue edit --add-label packagemanager-with-issues ${{ github.event.issue.number }} --repo vsts-extension-validation/vsts-extension-validation
         fi
       env:
         GH_TOKEN: ${{ steps.generate_token.outputs.token }}
